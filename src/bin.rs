@@ -24,6 +24,11 @@ impl YPBankBinRecord {
         reader
             .read_to_end(&mut data)
             .map_err(|e| ReadError::FailedReader(format!("Failed to read: {}", e)))?;
+        if data.is_empty() {
+            return Err(ReadError::IncorrectData(
+                "Reader provided no data".to_string(),
+            ));
+        }
         while !data.is_empty() {
             let head = Self::parse_head(&mut data)?;
             let mut payload = data.drain(..head.record_size as usize).collect::<Vec<u8>>();
@@ -196,9 +201,15 @@ impl YPBankBinRecord {
         desc_len: &DescLen,
     ) -> Result<Description, ReadError> {
         if let Some(len) = desc_len.0 {
-            if payload.len() < len as usize {
+            if payload.len() != len as usize {
                 return Err(ReadError::MismatchedSize(
-                    "Provided binary isn't complete".to_string(),
+                    "Provided binary's size doesn't match".to_string(),
+                ));
+            }
+            let empties = payload.iter().filter(|byte| **byte == 0).count();
+            if empties == payload.len() {
+                return Err(ReadError::IncorrectData(
+                    "Provided binary holds empty data".to_string(),
                 ));
             }
             match len {
@@ -230,7 +241,6 @@ impl YPBankBinRecord {
             self.body.5.0.to_be_bytes().to_vec(),
             self.write_status(),
             self.write_desc_len()?,
-            // self.body.8.0.to_be_bytes().to_vec(),
         ]);
         if let Some(v) = &self.body.8.0 {
             if v.len() as u32 > u32::MAX {
@@ -300,7 +310,7 @@ mod tests {
         }
     }
 
-    fn create_body(txtype: TxType, status: Status, size: Option<u32>) -> Body {
+    fn create_body_with_desc(txtype: TxType, status: Status, size: Option<u32>) -> Body {
         Body(
             TxId(1),
             txtype,
@@ -314,41 +324,241 @@ mod tests {
         )
     }
 
-    fn create_bin_record(txtype: TxType, status: Status, size: Option<u32>) -> YPBankBinRecord {
+    fn create_body_without_desc(txtype: TxType, status: Status) -> Body {
+        Body(
+            TxId(1),
+            txtype,
+            FromUserId(0),
+            ToUserId(1),
+            Amount(1),
+            Timestamp(1),
+            status,
+            DescLen(None),
+            Description(None),
+        )
+    }
+
+    fn create_bin_record(
+        txtype: TxType,
+        status: Status,
+        size: Option<u32>,
+        with_desc: bool,
+    ) -> YPBankBinRecord {
         YPBankBinRecord {
             head: create_head(),
-            body: create_body(txtype, status, size),
+            body: if with_desc {
+                create_body_with_desc(txtype, status, size)
+            } else {
+                create_body_without_desc(txtype, status)
+            },
         }
     }
 
     #[test]
     fn test_write_tx_type() {
-        let data = create_bin_record(TxType::Deposit, Status::Failure, Some(3));
+        let data = create_bin_record(TxType::Deposit, Status::Failure, Some(3), true);
         assert_eq!(data.write_tx_type(), [0]);
-        let data = create_bin_record(TxType::Transfer, Status::Failure, Some(3));
+        let data = create_bin_record(TxType::Transfer, Status::Failure, Some(3), true);
         assert_eq!(data.write_tx_type(), [1]);
-        let data = create_bin_record(TxType::Withdrawal, Status::Failure, Some(3));
+        let data = create_bin_record(TxType::Withdrawal, Status::Failure, Some(3), true);
         assert_eq!(data.write_tx_type(), [2]);
     }
 
     #[test]
     fn test_write_status() {
-        let data = create_bin_record(TxType::Deposit, Status::Failure, Some(3));
+        let data = create_bin_record(TxType::Deposit, Status::Failure, Some(3), true);
         assert_eq!(data.write_status(), [1]);
-        let data = create_bin_record(TxType::Deposit, Status::Success, Some(3));
+        let data = create_bin_record(TxType::Deposit, Status::Success, Some(3), true);
         assert_eq!(data.write_status(), [0]);
-        let data = create_bin_record(TxType::Deposit, Status::Pending, Some(3));
+        let data = create_bin_record(TxType::Deposit, Status::Pending, Some(3), true);
         assert_eq!(data.write_status(), [2]);
     }
 
     #[test]
     fn test_write_description() {
         // since DESC_LEN and DESCRIPTION are dependant on each other, we'll juggle values
-        let data = create_bin_record(TxType::Deposit, Status::Failure, Some(2));
+        let data = create_bin_record(TxType::Deposit, Status::Failure, Some(2), true);
         assert!(data.write_desc_len().is_err());
-        let data = create_bin_record(TxType::Deposit, Status::Failure, None);
+        let data = create_bin_record(TxType::Deposit, Status::Failure, None, true);
         assert!(data.write_desc_len().is_err());
-        let data = create_bin_record(TxType::Deposit, Status::Failure, Some(3));
+        let data = create_bin_record(TxType::Deposit, Status::Failure, Some(3), false);
         assert!(data.write_desc_len().is_ok());
+    }
+
+    #[test]
+    fn test_build_data_no_description() {
+        let record = create_bin_record(TxType::Deposit, Status::Failure, None, false);
+        let data = record.build_data();
+        assert!(data.is_ok());
+    }
+
+    #[test]
+    fn test_build_data_with_description() {
+        let record = create_bin_record(TxType::Deposit, Status::Failure, Some(3), true);
+        let data = record.build_data();
+        assert!(data.is_ok());
+    }
+
+    #[test]
+    fn test_parse_description_no_value() {
+        let mut payload = vec![0u8; 10];
+        let desc_len = DescLen(Some(0));
+        let result = YPBankBinRecord::parse_description(&mut payload, &desc_len);
+        assert!(result.is_err());
+        // assert!(result.is_ok_and(|v| matches!(v, Description(None))));
+        assert_eq!(payload.len(), 10);
+    }
+
+    #[test]
+    fn test_parse_description_with_value() {
+        let mut payload = "oleg".as_bytes().to_vec();
+        let desc_len = DescLen(Some(4));
+        let result = YPBankBinRecord::parse_description(&mut payload, &desc_len);
+        assert!(result.is_ok_and(|v| matches!(v, Description(Some(payload)))));
+    }
+
+    #[test]
+    fn test_parse_desc_len_failed() {
+        let mut payload = vec![1, 2, 3];
+        assert!(YPBankBinRecord::parse_desc_len(&mut payload).is_err());
+    }
+
+    #[test]
+    fn test_parse_desc_len_success() {
+        let mut payload = vec![1, 2, 3, 4];
+        assert!(YPBankBinRecord::parse_desc_len(&mut payload).is_ok());
+    }
+
+    #[test]
+    fn test_parse_status_failed() {
+        let mut payload = Vec::new();
+        assert!(YPBankBinRecord::parse_status(&mut payload).is_err());
+        let mut payload = vec![14];
+        assert!(YPBankBinRecord::parse_status(&mut payload).is_err());
+    }
+
+    #[test]
+    fn test_parse_status_success() {
+        let mut payload = vec![2];
+        assert!(YPBankBinRecord::parse_status(&mut payload).is_ok());
+    }
+
+    #[test]
+    fn test_parse_amount_failed() {
+        let mut payload = vec![1, 2, 3];
+        assert!(YPBankBinRecord::parse_amount(&mut payload).is_err());
+    }
+
+    #[test]
+    fn test_parse_amount_success() {
+        let mut payload = vec![1, 2, 3, 4, 5, 6, 7, 8];
+        assert!(YPBankBinRecord::parse_amount(&mut payload).is_ok());
+    }
+
+    #[test]
+    fn test_parse_timestamp_failed() {
+        let mut payload = vec![1, 2, 3];
+        assert!(YPBankBinRecord::parse_timestamp(&mut payload).is_err());
+    }
+
+    #[test]
+    fn test_parse_timestamp_success() {
+        let mut payload = vec![1, 2, 3, 4, 5, 6, 7, 8];
+        assert!(YPBankBinRecord::parse_timestamp(&mut payload).is_ok());
+    }
+
+    #[test]
+    fn test_parse_from_user_id_failed() {
+        let mut payload = vec![1, 2, 3];
+        let tx_type = TxType::Deposit;
+        assert!(YPBankBinRecord::parse_from_user_id(&mut payload, &tx_type).is_err());
+    }
+
+    #[test]
+    fn test_parse_from_user_id_success() {
+        let mut payload = vec![1, 2, 3, 4, 5, 6, 7, 8];
+        let tx_type = TxType::Deposit;
+        assert!(
+            YPBankBinRecord::parse_from_user_id(&mut payload, &tx_type).is_ok_and(|v| v.0 == 0)
+        );
+    }
+
+    #[test]
+    fn test_parse_to_user_id_failed() {
+        let mut payload = vec![1, 2, 3];
+        let tx_type = TxType::Withdrawal;
+        assert!(YPBankBinRecord::parse_to_user_id(&mut payload, &tx_type).is_err());
+    }
+
+    #[test]
+    fn test_parse_to_user_id_success() {
+        let mut payload = vec![1, 2, 3, 4, 5, 6, 7, 8];
+        let tx_type = TxType::Withdrawal;
+        assert!(YPBankBinRecord::parse_to_user_id(&mut payload, &tx_type).is_ok_and(|v| v.0 == 0));
+    }
+
+    #[test]
+    fn test_parse_head_failed() {
+        let mut payload = vec![1, 2, 3];
+        assert!(YPBankBinRecord::parse_head(&mut payload).is_err());
+        let mut payload = vec![1, 2, 3, 4, 5, 6, 7, 8];
+        assert!(YPBankBinRecord::parse_head(&mut payload).is_err());
+    }
+
+    #[test]
+    fn test_parse_head_success() {
+        let mut payload = vec![0x59, 0x50, 0x42, 0x4E, 5, 6, 7, 8];
+        assert!(YPBankBinRecord::parse_head(&mut payload).is_ok());
+    }
+
+    #[test]
+    fn test_parse_tx_id_failed() {
+        let mut payload = vec![1, 2, 3];
+        assert!(YPBankBinRecord::parse_tx_id(&mut payload).is_err());
+    }
+
+    #[test]
+    fn test_parse_tx_id_success() {
+        let mut payload = vec![1, 2, 3, 4, 5, 6, 7, 8];
+        assert!(YPBankBinRecord::parse_tx_id(&mut payload).is_ok());
+    }
+
+    #[test]
+    fn test_parse_tx_type_failed() {
+        let mut payload = Vec::new();
+        assert!(YPBankBinRecord::parse_tx_type(&mut payload).is_err());
+        let mut payload = vec![14];
+        assert!(YPBankBinRecord::parse_status(&mut payload).is_err());
+    }
+
+    #[test]
+    fn test_parse_tx_type_success() {
+        let mut payload = vec![2];
+        assert!(YPBankBinRecord::parse_tx_type(&mut payload).is_ok());
+    }
+
+    #[test]
+    fn test_parse_empty() {
+        let reader = "".as_bytes();
+        assert!(YPBankBinRecord::parse(reader).is_err());
+    }
+
+    #[test]
+    fn test_parse_success() {
+        let reader = [
+            89, 80, 66, 78, 0, 0, 0, 63, 0, 3, 141, 126, 164, 198, 128, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 127, 255, 255, 255, 255, 255, 255, 255, 0, 0, 0, 0, 0, 0, 0, 100, 0, 0, 1, 124, 56,
+            148, 250, 96, 1, 0, 0, 0, 17, 34, 82, 101, 99, 111, 114, 100, 32, 110, 117, 109, 98,
+            101, 114, 32, 49, 34, 89, 80, 66, 78, 0, 0, 0, 63, 0, 3, 141, 126, 164, 198, 128, 1, 1,
+            127, 255, 255, 255, 255, 255, 255, 255, 127, 255, 255, 255, 255, 255, 255, 255, 0, 0,
+            0, 0, 0, 0, 0, 200, 0, 0, 1, 124, 56, 149, 228, 192, 2, 0, 0, 0, 17, 34, 82, 101, 99,
+            111, 114, 100, 32, 110, 117, 109, 98, 101, 114, 32, 50, 34,
+        ]
+        .as_slice();
+
+        let result = YPBankBinRecord::parse(reader);
+        assert!(result.is_ok_and(|v| v[0].get_id() == 1000000000000000));
+        let result = YPBankBinRecord::parse(reader);
+        assert!(result.is_ok_and(|v| v.len() == 2));
     }
 }

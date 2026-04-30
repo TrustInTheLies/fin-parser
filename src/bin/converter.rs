@@ -1,9 +1,3 @@
-// ypbank_converter \
-//   --input <input_file> \
-//   --input-format <format> \
-//   --output-format <format> \
-//   > output_file.txt
-
 use std::{fmt::Display, fs::File};
 
 use fin_parser::Format;
