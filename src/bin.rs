@@ -296,12 +296,14 @@ impl YPBankBinRecord {
 }
 
 mod tests {
+    #[cfg(test)]
     use crate::{
         Amount, Body, DescLen, Description, FromUserId, Head, Status, Timestamp, ToUserId, TxId,
         TxType,
         bin::{MAGIC, SIZE_WITHOUT_DESCRIPTION, YPBankBinRecord},
     };
 
+    #[cfg(test)]
     fn create_head() -> Head {
         let record_size = SIZE_WITHOUT_DESCRIPTION + 3;
         Head {
@@ -310,6 +312,7 @@ mod tests {
         }
     }
 
+    #[cfg(test)]
     fn create_body_with_desc(txtype: TxType, status: Status, size: Option<u32>) -> Body {
         Body(
             TxId(1),
@@ -324,6 +327,7 @@ mod tests {
         )
     }
 
+    #[cfg(test)]
     fn create_body_without_desc(txtype: TxType, status: Status) -> Body {
         Body(
             TxId(1),
@@ -338,6 +342,7 @@ mod tests {
         )
     }
 
+    #[cfg(test)]
     fn create_bin_record(
         txtype: TxType,
         status: Status,
@@ -414,7 +419,8 @@ mod tests {
         let mut payload = "oleg".as_bytes().to_vec();
         let desc_len = DescLen(Some(4));
         let result = YPBankBinRecord::parse_description(&mut payload, &desc_len);
-        assert!(result.is_ok_and(|v| matches!(v, Description(Some(payload)))));
+        assert!(result.is_ok_and(|v| v.0.is_some_and(|v2| v2 == "oleg".as_bytes().to_vec())));
+        assert!(payload.is_empty());
     }
 
     #[test]
