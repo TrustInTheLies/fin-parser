@@ -103,7 +103,6 @@ impl YPBankTxtRecord {
             .map(|part| part.trim())
             .filter(|v| !v.is_empty())
             .collect::<Vec<&str>>();
-        println!("Value: |{:?}|", value);
         if value.len() == 1 {
             return Err(ReadError::IncorrectData(format!("Missing {} value", field)));
         };
@@ -181,7 +180,6 @@ impl YPBankTxtRecord {
 }
 
 mod tests {
-    use crate::ReadError;
     #[cfg(test)]
     use crate::{
         Amount, Body, DescLen, Description, FromUserId, Status, Timestamp, ToUserId, TxId, TxType,

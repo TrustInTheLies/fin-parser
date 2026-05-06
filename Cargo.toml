@@ -1,5 +1,6 @@
 [package]
 name = "fin-parser"
+author = "Morinov Artem"
 version = "0.1.0"
 edition = "2024"
 

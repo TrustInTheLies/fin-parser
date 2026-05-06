@@ -241,7 +241,12 @@ impl From<&YPBankCsvRecord> for YPBankTxtRecord {
 
 impl From<&YPBankCsvRecord> for YPBankBinRecord {
     fn from(value: &YPBankCsvRecord) -> Self {
-        let record_size = SIZE_WITHOUT_DESCRIPTION + value.body.7.0.unwrap_or(0);
+        let desc_len = if let Some(desc) = &value.body.8.0 {
+            desc.len() as u32
+        } else {
+            0
+        };
+        let record_size = SIZE_WITHOUT_DESCRIPTION + desc_len;
         let head = Head {
             magic: u32::from_be_bytes(MAGIC),
             record_size,
@@ -256,7 +261,7 @@ impl From<&YPBankCsvRecord> for YPBankBinRecord {
                 value.body.4,
                 value.body.5,
                 value.body.6,
-                value.body.7,
+                DescLen(Some(desc_len)),
                 value.body.8.clone(),
             ),
         }
@@ -265,7 +270,12 @@ impl From<&YPBankCsvRecord> for YPBankBinRecord {
 
 impl From<&YPBankTxtRecord> for YPBankBinRecord {
     fn from(value: &YPBankTxtRecord) -> Self {
-        let record_size = SIZE_WITHOUT_DESCRIPTION + value.body.7.0.unwrap_or(0);
+        let desc_len = if let Some(desc) = &value.body.8.0 {
+            desc.len() as u32
+        } else {
+            0
+        };
+        let record_size = SIZE_WITHOUT_DESCRIPTION + desc_len;
         let head = Head {
             magic: u32::from_be_bytes(MAGIC),
             record_size,
@@ -280,7 +290,7 @@ impl From<&YPBankTxtRecord> for YPBankBinRecord {
                 value.body.4,
                 value.body.5,
                 value.body.6,
-                value.body.7,
+                DescLen(Some(desc_len)),
                 value.body.8.clone(),
             ),
         }

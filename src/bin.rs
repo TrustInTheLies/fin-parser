@@ -202,9 +202,11 @@ impl YPBankBinRecord {
     ) -> Result<Description, ReadError> {
         if let Some(len) = desc_len.0 {
             if payload.len() != len as usize {
-                return Err(ReadError::MismatchedSize(
-                    "Provided binary's size doesn't match".to_string(),
-                ));
+                return Err(ReadError::MismatchedSize(format!(
+                    "Provided binary's size doesn't match, expected {}, got {}",
+                    len,
+                    payload.len()
+                )));
             }
             let empties = payload.iter().filter(|byte| **byte == 0).count();
             if empties == payload.len() {
@@ -283,10 +285,10 @@ impl YPBankBinRecord {
                 "DESC_LEN value and DESCRIPTION size does not match".into(),
             ));
         }
-        if self.body.7.0.is_none() && self.body.8.0.is_some() {
-            return Err(WriteError::IncorrectData(
-                "DESC_LEN value and DESCRIPTION size does not match".into(),
-            ));
+        if self.body.7.0.is_none()
+            && let Some(data) = self.body.8.0.clone()
+        {
+            return Ok((data.len() as u32).to_be_bytes().to_vec());
         }
         match self.body.7.0 {
             Some(v) => Ok(v.to_be_bytes().to_vec()),
@@ -385,7 +387,7 @@ mod tests {
         let data = create_bin_record(TxType::Deposit, Status::Failure, Some(2), true);
         assert!(data.write_desc_len().is_err());
         let data = create_bin_record(TxType::Deposit, Status::Failure, None, true);
-        assert!(data.write_desc_len().is_err());
+        assert!(data.write_desc_len().is_ok());
         let data = create_bin_record(TxType::Deposit, Status::Failure, Some(3), false);
         assert!(data.write_desc_len().is_ok());
     }
