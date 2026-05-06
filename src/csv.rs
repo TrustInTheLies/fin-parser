@@ -21,18 +21,26 @@ impl YPBankCsvRecord {
         reader
             .read_to_string(&mut data)
             .map_err(|e| ReadError::FailedReader(format!("Failed to read: {}", e)))?;
-        let mut lines = data.lines().collect::<Vec<&str>>();
+        let mut lines = data
+            .lines()
+            .map(|line| line.trim())
+            .filter(|line| !line.is_empty())
+            .collect::<Vec<&str>>();
         let header: Vec<&str> = lines.drain(..1).collect();
         if header[0] != CSV_LAYOUT {
-            return Err(ReadError::IncorrectData("Incorrect header".into()));
+            return Err(ReadError::IncorrectData(format!(
+                "Incorrect header, expected {}, got {}",
+                CSV_LAYOUT, header[0]
+            )));
         };
         for line in lines {
-            if line.is_empty() {
-                continue;
-            }
             let fields = line.split(",").collect::<Vec<&str>>();
             if fields.len() != REQUIRED_LEN {
-                return Err(ReadError::IncorrectData("Not enough fields".into()));
+                return Err(ReadError::IncorrectData(format!(
+                    "Not enough fields, expected {}, got {}",
+                    REQUIRED_LEN,
+                    fields.len(),
+                )));
             }
             let tx_id = Self::parse_tx_id(fields[0])?;
             let tx_type = Self::parse_tx_type(fields[1])?;
@@ -147,7 +155,6 @@ mod tests {
             Timestamp(1),
             status,
             DescLen(size),
-            // Description(Some(Vec::from("bye"))),
             Description(Some(vec![1, 2, 3])),
         )
     }
@@ -282,5 +289,83 @@ mod tests {
         assert!(YPBankCsvRecord::parse_to_user_id("11", &tx_type).is_ok_and(|v| v.0 == 11));
         let tx_type = TxType::Deposit;
         assert!(YPBankCsvRecord::parse_to_user_id("11", &tx_type).is_ok_and(|v| v.0 == 11));
+    }
+
+    #[test]
+    fn test_parse_tx_id_success() {
+        assert!(YPBankCsvRecord::parse_tx_id("11").is_ok());
+    }
+
+    #[test]
+    fn test_parse_tx_id_failed() {
+        assert!(YPBankCsvRecord::parse_tx_id("-11").is_err());
+        assert!(YPBankCsvRecord::parse_tx_id("22.1").is_err());
+        assert!(YPBankCsvRecord::parse_tx_id("oleg").is_err());
+    }
+
+    #[test]
+    fn test_parse_tx_type_success() {
+        assert!(matches!(
+            YPBankCsvRecord::parse_tx_type("DEPOSIT"),
+            Ok(TxType::Deposit)
+        ));
+        assert!(matches!(
+            YPBankCsvRecord::parse_tx_type("TRANSFER"),
+            Ok(TxType::Transfer)
+        ));
+        assert!(matches!(
+            YPBankCsvRecord::parse_tx_type("WITHDRAWAL"),
+            Ok(TxType::Withdrawal)
+        ));
+    }
+
+    #[test]
+    fn test_parse_tx_type_failed() {
+        assert!(YPBankCsvRecord::parse_tx_type("oleg").is_err());
+    }
+
+    #[test]
+    fn test_parse_empty_line() {
+        let text = "
+            TX_ID,TX_TYPE,FROM_USER_ID,TO_USER_ID,AMOUNT,TIMESTAMP,STATUS,DESCRIPTION
+
+            1000000000000000,DEPOSIT,0,9223372036854775807,100,1633036860000,FAILURE,\"Record number 1\"
+
+
+            1000000000000001,TRANSFER,9223372036854775807,9223372036854775807,200,1633036920000,PENDING,\"Record number 2\"
+            ";
+        let reader = text.as_bytes();
+        let result = YPBankCsvRecord::parse(reader);
+        assert!(result.is_ok_and(|v| v.len() == 2));
+    }
+
+    #[test]
+    fn test_parse_failed_header() {
+        let text = "TX_ID,TX_TYPE,FROM_USER_ID,TO_USER_ID,OO,TIMESTAMP,STATUS,DESCRIPTION
+        1000000000000000,DEPOSIT,0,9223372036854775807,100,1633036860000,FAILURE,\"Record number 1\"
+        1000000000000001,TRANSFER,9223372036854775807,9223372036854775807,200,1633036920000,PENDING,\"Record number 2\"";
+        let reader = text.as_bytes();
+        let result = YPBankCsvRecord::parse(reader);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_failed_len() {
+        let text = "TX_ID,TX_TYPE,FROM_USER_ID,TO_USER_ID,OO,TIMESTAMP,STATUS,DESCRIPTION
+        1000000000000000,DEPOSIT,0,100,1633036860000,FAILURE,\"Record number 1\"
+        1000000000000001,TRANSFER,9223372036854775807,9223372036854775807,200,1633036920000,PENDING,\"Record number 2\"";
+        let reader = text.as_bytes();
+        let result = YPBankCsvRecord::parse(reader);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_success() {
+        let text = "TX_ID,TX_TYPE,FROM_USER_ID,TO_USER_ID,AMOUNT,TIMESTAMP,STATUS,DESCRIPTION
+            1000000000000000,DEPOSIT,0,9223372036854775807,100,1633036860000,FAILURE,\"Record number 1\"
+            1000000000000001,TRANSFER,9223372036854775807,9223372036854775807,200,1633036920000,PENDING,\"Record number 2\"";
+        let reader = text.as_bytes();
+        let result = YPBankCsvRecord::parse(reader);
+        assert!(result.is_ok_and(|v| v[0].get_id() == 1000000000000000));
     }
 }
