@@ -1,4 +1,4 @@
-use std::{fmt::Display, fs::File};
+use std::fmt::Display;
 
 use fin_parser::Format;
 
@@ -94,14 +94,8 @@ fn main() {
         Format::Csv => "csv",
         Format::Txt => "txt",
     };
-    let mut new_file = match File::create(format!("converted.{}", extension)) {
-        Ok(v) => v,
-        Err(e) => {
-            println!("Failed to create converted file: {}", e);
-            return;
-        }
-    };
-    match fin_parser::write_all_to(&mut new_file, data, args.output_format) {
+
+    match fin_parser::write_all_to(&mut std::io::stdout(), data, args.output_format) {
         Ok(_) => println!("Successfully created converted.{} file", extension),
         Err(e) => println!("Failed to write to converted.{}: {}", extension, e),
     };
